@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head><title>ShortsBot - Authorization</title></head>
+<body>
+<h2>Completing authorization...</h2>
+<p id="msg">Redirecting back to the app...</p>
+<script>
+  // Forward the full query string (code, state, error) back to the local server
+  const params = window.location.search;
+  const local = "http://localhost:8080/callback" + params;
+  window.location.href = local;
+</script>
+</body>
+</html>

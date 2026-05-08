@@ -1,11 +1,12 @@
-"""TikTok OAuth 2.0 with PKCE — multi-account token management."""
+"""TikTok OAuth 2.0 — multi-account token management."""
 
 import base64
 import hashlib
 import json
-import os
+import random
 import re
 import secrets
+import string
 import threading
 import webbrowser
 from datetime import datetime, timedelta
@@ -20,17 +21,6 @@ SCOPES = "user.info.basic,video.upload,video.publish,video.list"
 AUTH_URL = "https://www.tiktok.com/v2/auth/authorize/"
 TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
 REDIRECT_URI = "http://localhost:8080/callback"
-
-
-# ---------------------------------------------------------------------------
-# PKCE helpers
-# ---------------------------------------------------------------------------
-
-def _pkce_pair() -> tuple[str, str]:
-    verifier = base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode()
-    digest = hashlib.sha256(verifier.encode()).digest()
-    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
-    return verifier, challenge
 
 
 # ---------------------------------------------------------------------------
@@ -64,12 +54,14 @@ class _Handler(BaseHTTPRequestHandler):
         _Handler.event.set()
 
     def log_message(self, *_):
-        pass  # suppress console noise
+        pass
 
 
 def _run_oauth_flow(client_key: str, client_secret: str) -> dict:
-    """Run the full browser-based OAuth PKCE flow; return raw token dict."""
-    verifier, challenge = _pkce_pair()
+    """Authorization code flow with S256 PKCE."""
+    code_verifier = secrets.token_urlsafe(32)  # 43-char base64url, RFC 7636 standard
+    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
+    code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     state = secrets.token_urlsafe(16)
 
     params = {
@@ -78,7 +70,7 @@ def _run_oauth_flow(client_key: str, client_secret: str) -> dict:
         "response_type": "code",
         "redirect_uri": REDIRECT_URI,
         "state": state,
-        "code_challenge": challenge,
+        "code_challenge": code_challenge,
         "code_challenge_method": "S256",
     }
     auth_url = AUTH_URL + "?" + urlencode(params)
@@ -101,17 +93,20 @@ def _run_oauth_flow(client_key: str, client_secret: str) -> dict:
     if not result.code:
         raise RuntimeError("Auth timed out — no code received within 5 minutes.")
 
-    # Exchange code for token
+    # Keep TikTok's non-standard code chars (* !) unencoded in the POST body
+    from urllib.parse import quote
+    body = (
+        f"client_key={quote(client_key, safe='')}"
+        f"&client_secret={quote(client_secret, safe='')}"
+        f"&code={quote(result.code, safe='-_.~*!()')}"
+        f"&grant_type=authorization_code"
+        f"&redirect_uri={quote(REDIRECT_URI, safe='')}"
+        f"&code_verifier={quote(code_verifier, safe='')}"
+    )
+
     resp = requests.post(
         TOKEN_URL,
-        data={
-            "client_key": client_key,
-            "client_secret": client_secret,
-            "code": result.code,
-            "grant_type": "authorization_code",
-            "redirect_uri": REDIRECT_URI,
-            "code_verifier": verifier,
-        },
+        data=body,
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         timeout=30,
     )
