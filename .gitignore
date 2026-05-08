@@ -1,0 +1,13 @@
+# OAuth credentials and tokens — never commit these
+client_secrets.json
+tiktok_client_secrets.json
+youtube_token.json
+tokens/
+tiktok_tokens/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
