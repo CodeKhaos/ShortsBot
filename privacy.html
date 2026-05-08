@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Policy — ShortsBot</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0a;
+      --surface: #111111;
+      --border: #222222;
+      --accent: #e8ff47;
+      --text: #d4d4d4;
+      --muted: #666666;
+      --heading: #f0f0f0;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Sans', sans-serif;
+      font-weight: 300;
+      line-height: 1.8;
+      min-height: 100vh;
+      padding: 0 1.5rem;
+    }
+
+    .wrapper {
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 5rem 0 6rem;
+    }
+
+    .badge {
+      display: inline-block;
+      font-family: 'DM Mono', monospace;
+      font-size: 0.7rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+      padding: 0.25rem 0.75rem;
+      margin-bottom: 2rem;
+    }
+
+    h1 {
+      font-family: 'DM Sans', sans-serif;
+      font-weight: 500;
+      font-size: clamp(2rem, 5vw, 3rem);
+      color: var(--heading);
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+      margin-bottom: 0.75rem;
+    }
+
+    .meta {
+      font-family: 'DM Mono', monospace;
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-bottom: 3.5rem;
+      padding-bottom: 3.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    h2 {
+      font-family: 'DM Sans', sans-serif;
+      font-weight: 500;
+      font-size: 0.8rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin: 2.5rem 0 0.75rem;
+    }
+
+    p {
+      margin-bottom: 1rem;
+      color: var(--text);
+    }
+
+    ul {
+      list-style: none;
+      margin-bottom: 1rem;
+      padding-left: 0;
+    }
+
+    ul li {
+      padding: 0.25rem 0 0.25rem 1.25rem;
+      position: relative;
+      color: var(--text);
+    }
+
+    ul li::before {
+      content: '—';
+      position: absolute;
+      left: 0;
+      color: var(--muted);
+      font-family: 'DM Mono', monospace;
+    }
+
+    .highlight-box {
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      padding: 1.25rem 1.5rem;
+      margin: 1.5rem 0;
+      background: var(--surface);
+    }
+
+    .highlight-box p {
+      margin: 0;
+      font-family: 'DM Mono', monospace;
+      font-size: 0.8rem;
+      color: var(--text);
+      line-height: 1.7;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+      border-bottom: 1px solid transparent;
+      transition: border-color 0.2s;
+    }
+    a:hover { border-color: var(--accent); }
+
+    .footer {
+      margin-top: 4rem;
+      padding-top: 2rem;
+      border-top: 1px solid var(--border);
+      font-family: 'DM Mono', monospace;
+      font-size: 0.7rem;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .footer a { color: var(--muted); font-size: inherit; }
+    .footer a:hover { color: var(--accent); border-color: transparent; }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <div class="badge">Legal</div>
+    <h1>Privacy Policy</h1>
+    <p class="meta">ShortsBot &nbsp;·&nbsp; Last updated: May 7, 2026</p>
+
+    <div class="highlight-box">
+      <p>TL;DR — ShortsBot does not collect, store, or transmit your personal data to any server. Everything stays on your machine.</p>
+    </div>
+
+    <h2>01 — Who We Are</h2>
+    <p>ShortsBot is a personal tool built and operated by GoodKhaos for managing YouTube Shorts and TikTok content scheduling. This policy explains how the tool handles your information.</p>
+
+    <h2>02 — What Data We Access</h2>
+    <p>ShortsBot accesses the following data solely to perform its intended functions:</p>
+    <ul>
+      <li>Your YouTube channel's video list, titles, descriptions, and publish status — via the YouTube Data API v3</li>
+      <li>Your TikTok account's content posting permissions — via the TikTok Content Posting API</li>
+      <li>OAuth 2.0 access tokens issued by Google and TikTok when you authorize the app</li>
+    </ul>
+
+    <h2>03 — What We Do NOT Collect</h2>
+    <ul>
+      <li>We do not collect your name, email address, or any personally identifiable information</li>
+      <li>We do not store your video content, thumbnails, or media files on any external server</li>
+      <li>We do not use analytics, tracking pixels, or cookies</li>
+      <li>We do not sell, share, or transmit your data to any third party</li>
+    </ul>
+
+    <h2>04 — Local Storage Only</h2>
+    <p>All OAuth tokens are stored locally on your machine in a file called <code style="font-family: 'DM Mono', monospace; color: var(--accent); font-size: 0.85em;">youtube_token.json</code>. This file never leaves your computer. No external database or cloud storage is used.</p>
+
+    <h2>05 — Third-Party APIs</h2>
+    <p>ShortsBot communicates directly with:</p>
+    <ul>
+      <li><strong style="font-weight: 500; color: var(--heading);">YouTube Data API v3</strong> (Google) — governed by <a href="https://policies.google.com/privacy" target="_blank">Google's Privacy Policy</a></li>
+      <li><strong style="font-weight: 500; color: var(--heading);">TikTok Content Posting API</strong> — governed by <a href="https://www.tiktok.com/legal/page/us/privacy-policy/en" target="_blank">TikTok's Privacy Policy</a></li>
+    </ul>
+    <p>Data sent to these APIs is subject to their respective privacy policies. ShortsBot does not intercept or log that data.</p>
+
+    <h2>06 — Revoking Access</h2>
+    <p>You can revoke ShortsBot's API access at any time:</p>
+    <ul>
+      <li>YouTube: <a href="https://myaccount.google.com/permissions" target="_blank">myaccount.google.com/permissions</a></li>
+      <li>TikTok: Settings → Security → Authorized Apps</li>
+    </ul>
+    <p>Deleting the local <code style="font-family: 'DM Mono', monospace; color: var(--accent); font-size: 0.85em;">youtube_token.json</code> file will also remove local access.</p>
+
+    <h2>07 — Children's Privacy</h2>
+    <p>ShortsBot is not intended for use by anyone under the age of 13 and does not knowingly collect data from children.</p>
+
+    <h2>08 — Changes to This Policy</h2>
+    <p>This policy may be updated at any time. The "last updated" date at the top of this page will reflect any changes. Continued use of the tool constitutes acceptance of any revised policy.</p>
+
+    <h2>09 — Contact</h2>
+    <p>Questions? Reach out via <a href="https://www.goodkhaos.com" target="_blank">goodkhaos.com</a>.</p>
+
+    <div class="footer">
+      <span>© 2026 GoodKhaos. All rights reserved.</span>
+      <span>
+        <a href="tos.html">Terms of Service</a> &nbsp;·&nbsp;
+        <a href="privacy.html">Privacy Policy</a>
+      </span>
+    </div>
+  </div>
+</body>
+</html>
