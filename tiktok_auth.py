@@ -1,9 +1,7 @@
 """TikTok OAuth 2.0 — multi-account token management."""
 
-import base64
 import hashlib
 import json
-import random
 import re
 import secrets
 import string
@@ -57,11 +55,8 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
 
-def _run_oauth_flow(client_key: str, client_secret: str) -> dict:
-    """Authorization code flow with S256 PKCE."""
-    code_verifier = secrets.token_urlsafe(32)  # 43-char base64url, RFC 7636 standard
-    digest = hashlib.sha256(code_verifier.encode("ascii")).digest()
-    code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+def _run_oauth_flow(client_key: str, client_secret: str, use_pkce: bool = True) -> dict:
+    """Authorization code flow.  PKCE (S256) is used when use_pkce=True."""
     state = secrets.token_urlsafe(16)
 
     params = {
@@ -70,9 +65,18 @@ def _run_oauth_flow(client_key: str, client_secret: str) -> dict:
         "response_type": "code",
         "redirect_uri": REDIRECT_URI,
         "state": state,
-        "code_challenge": code_challenge,
-        "code_challenge_method": "S256",
     }
+
+    code_verifier: str | None = None
+    if use_pkce:
+        alphabet = string.ascii_letters + string.digits
+        code_verifier = "".join(secrets.choice(alphabet) for _ in range(64))
+        # TikTok's S256 challenge is the SHA256 hex digest — NOT base64url as per
+        # RFC 7636. Their own docs show: SHA256(verifier).toString(CryptoJS.enc.Hex)
+        code_challenge = hashlib.sha256(code_verifier.encode("ascii")).hexdigest()
+        params["code_challenge"] = code_challenge
+        params["code_challenge_method"] = "S256"
+
     auth_url = AUTH_URL + "?" + urlencode(params)
 
     result = _Result()
@@ -93,21 +97,19 @@ def _run_oauth_flow(client_key: str, client_secret: str) -> dict:
     if not result.code:
         raise RuntimeError("Auth timed out — no code received within 5 minutes.")
 
-    # Keep TikTok's non-standard code chars (* !) unencoded in the POST body
-    from urllib.parse import quote
-    body = (
-        f"client_key={quote(client_key, safe='')}"
-        f"&client_secret={quote(client_secret, safe='')}"
-        f"&code={quote(result.code, safe='-_.~*!()')}"
-        f"&grant_type=authorization_code"
-        f"&redirect_uri={quote(REDIRECT_URI, safe='')}"
-        f"&code_verifier={quote(code_verifier, safe='')}"
-    )
+    token_params = {
+        "client_key": client_key,
+        "client_secret": client_secret,
+        "code": result.code,
+        "grant_type": "authorization_code",
+        "redirect_uri": REDIRECT_URI,
+    }
+    if code_verifier is not None:
+        token_params["code_verifier"] = code_verifier
 
     resp = requests.post(
         TOKEN_URL,
-        data=body,
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        data=token_params,
         timeout=30,
     )
     resp.raise_for_status()

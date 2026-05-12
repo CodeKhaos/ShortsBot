@@ -12,13 +12,7 @@ DEFAULT_CONFIG = {
     "active_account": "",
     "default_tags": [
         "goodkhaos", "good khaos", "goodchaos", "good chaos", "good kaos", "goodkaos",
-        "gk", "trees hate you", "trees hate you gameplay", "trees hate you game",
-        "indie survival game", "funny gameplay", "rage game", "hard games",
-        "challenging games", "survival gameplay", "indie horror", "nature gone wrong",
-        "crazy game moments", "streamer reactions", "funny moments gaming",
-        "chaotic gameplay", "new indie games 2026", "viral indie game",
-        "obstacle survival game", "rage quit game", "environmental hazards game",
-        "forest survival game",
+        "gk", "biblekhaos", "bible khaos"
     ],
     "timezone": "America/Los_Angeles",
     "schedule_times": ["07:00", "21:00"],

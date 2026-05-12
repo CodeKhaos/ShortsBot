@@ -7,10 +7,12 @@ from datetime import datetime, date
 from pathlib import Path
 from tkinter import ttk, messagebox, simpledialog
 import pytz
+from ui.widgets import DateEntry
 
 from ui.video_table import VideoTable
 from ui.settings_panel import SettingsPanel
 from ui.upload_tab import UploadTab
+from ui.bulk_upload_tab import BulkUploadTab
 from ui.tiktok_manage_tab import TikTokManageTab
 from ui.tiktok_upload_tab import TikTokUploadTab
 from scheduler import generate_slots, format_schedule_summary
@@ -57,13 +59,10 @@ class App(tk.Tk):
         self._build_tiktok_platform(tk_frame)
 
     def _build_youtube_platform(self, parent):
-        """YouTube tab: account bar + action toolbar + sub-notebook (Manage / Upload)."""
+        """YouTube tab: account bar + sub-notebook (Manage / Upload)."""
         # Account bar (YouTube-specific)
         self._build_yt_account_bar(parent)
         ttk.Separator(parent, orient="horizontal").pack(fill="x", padx=4)
-
-        # Action toolbar
-        self._build_yt_action_toolbar(parent)
 
         # Sub-notebook
         yt_nb = ttk.Notebook(parent)
@@ -77,6 +76,11 @@ class App(tk.Tk):
             yt_nb, get_service=lambda: self._service, config=self._config
         )
         yt_nb.add(self.upload_tab, text="⬆  Upload Short")
+
+        self.bulk_upload_tab = BulkUploadTab(
+            yt_nb, get_service=lambda: self._service, config=self._config
+        )
+        yt_nb.add(self.bulk_upload_tab, text="⬆⬆  Bulk Upload")
 
     def _build_yt_account_bar(self, parent):
         bar = ttk.Frame(parent, padding=(6, 3))
@@ -94,20 +98,79 @@ class App(tk.Tk):
         ttk.Button(bar, text="✕ Remove", command=self._remove_account).pack(side="left", padx=2)
 
     def _build_yt_action_toolbar(self, parent):
+        """Toolbar for the Manage Videos tab — refresh, scheduling, save, copy."""
         toolbar = ttk.Frame(parent, padding=(6, 3))
         toolbar.pack(fill="x", side="top")
+
+        # ── Refresh + load limit ──────────────────────────────────────
         ttk.Button(toolbar, text="↺ Refresh", command=self._load_videos).pack(side="left", padx=2)
         ttk.Label(toolbar, text="Load:").pack(side="left", padx=(6, 2))
         self.load_limit_var = tk.StringVar(value=str(self._config.get("load_limit", 25)))
         ttk.Entry(toolbar, textvariable=self.load_limit_var, width=5).pack(side="left")
         ttk.Label(toolbar, text="videos (0=all)").pack(side="left", padx=(2, 0))
+
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=6)
-        ttk.Label(toolbar, text="Start Date (YYYY-MM-DD):").pack(side="left")
-        self.start_date_var = tk.StringVar(value=date.today().strftime("%Y-%m-%d"))
-        ttk.Entry(toolbar, textvariable=self.start_date_var, width=12).pack(side="left", padx=4)
-        ttk.Button(toolbar, text="⚡ Auto-Schedule Selected", command=self._auto_schedule).pack(
-            side="left", padx=2
+
+        # ── Schedule mode selector ────────────────────────────────────
+        ttk.Label(toolbar, text="Schedule:").pack(side="left", padx=(0, 4))
+        self._sched_mode = tk.StringVar(value="Bulk Schedule")
+        mode_combo = ttk.Combobox(
+            toolbar, textvariable=self._sched_mode,
+            values=["Bulk Schedule", "Schedule Date"],
+            width=14, state="readonly",
         )
+        mode_combo.pack(side="left", padx=(0, 6))
+
+        # ── Bulk Schedule panel ───────────────────────────────────────
+        self._bulk_frame = ttk.Frame(toolbar)
+        self._bulk_frame.pack(side="left")
+        ttk.Label(self._bulk_frame, text="Start Date:").pack(side="left", padx=(0, 4))
+        self._bulk_date_picker = DateEntry(
+            self._bulk_frame, width=12, date_pattern="yyyy-mm-dd",
+            background="darkblue", foreground="white", borderwidth=2,
+        )
+        self._bulk_date_picker.set_date(date.today())
+        self._bulk_date_picker.pack(side="left", padx=(0, 6))
+        ttk.Button(
+            self._bulk_frame, text="⚡ Auto-Schedule Selected",
+            command=self._auto_schedule,
+        ).pack(side="left", padx=2)
+
+        # ── Schedule Date panel ───────────────────────────────────────
+        self._date_frame = ttk.Frame(toolbar)
+        # (not packed yet — hidden until mode switches)
+        ttk.Label(self._date_frame, text="Date:").pack(side="left", padx=(0, 4))
+        self._sched_date_picker = DateEntry(
+            self._date_frame, width=12, date_pattern="yyyy-mm-dd",
+            background="darkblue", foreground="white", borderwidth=2,
+        )
+        self._sched_date_picker.set_date(date.today())
+        self._sched_date_picker.pack(side="left", padx=(0, 6))
+        ttk.Label(self._date_frame, text="Time:").pack(side="left", padx=(0, 4))
+        self._sched_hour = tk.StringVar(value="07")
+        self._sched_min  = tk.StringVar(value="00")
+        ttk.Spinbox(
+            self._date_frame, textvariable=self._sched_hour,
+            values=[f"{h:02d}" for h in range(24)],
+            width=3, wrap=True, state="readonly",
+        ).pack(side="left")
+        ttk.Label(self._date_frame, text=":").pack(side="left")
+        ttk.Spinbox(
+            self._date_frame, textvariable=self._sched_min,
+            values=["00","05","10","15","20","25","30","35","40","45","50","55"],
+            width=3, wrap=True, state="readonly",
+        ).pack(side="left", padx=(0, 6))
+        ttk.Button(
+            self._date_frame, text="📅 Apply Date to Selected",
+            command=self._apply_schedule_date,
+        ).pack(side="left", padx=2)
+
+        # swap panels when mode changes
+        mode_combo.bind("<<ComboboxSelected>>", self._on_sched_mode_change)
+
+        ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=6)
+
+        # ── Shared action buttons ─────────────────────────────────────
         ttk.Button(toolbar, text="💾 Apply & Save Selected", command=self._apply_save).pack(
             side="left", padx=2
         )
@@ -117,7 +180,17 @@ class App(tk.Tk):
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=6)
         ttk.Checkbutton(toolbar, text="Dry Run", variable=self._dry_run).pack(side="left")
 
+    def _on_sched_mode_change(self, _event=None):
+        if self._sched_mode.get() == "Bulk Schedule":
+            self._date_frame.pack_forget()
+            self._bulk_frame.pack(side="left")
+        else:
+            self._bulk_frame.pack_forget()
+            self._date_frame.pack(side="left")
+
     def _build_manage_content(self, parent):
+        self._build_yt_action_toolbar(parent)
+
         paned = ttk.PanedWindow(parent, orient="vertical")
         paned.pack(fill="both", expand=True)
 
@@ -283,9 +356,10 @@ class App(tk.Tk):
             pass
 
     def _on_settings_change(self):
-        """Called when settings panel saves a preset — also refresh upload tab."""
+        """Called when settings panel saves a preset — also refresh upload tabs."""
         self._save_config()
         self.upload_tab.refresh_presets()
+        self.bulk_upload_tab.refresh_presets()
 
     # ------------------------------------------------------------------
     # Account management
@@ -432,12 +506,7 @@ class App(tk.Tk):
             messagebox.showinfo("Auto-Schedule", "No videos checked.")
             return
 
-        try:
-            start = datetime.strptime(self.start_date_var.get().strip(), "%Y-%m-%d")
-        except ValueError:
-            messagebox.showerror("Bad Date", "Start date must be YYYY-MM-DD.")
-            return
-
+        start = datetime.combine(self._bulk_date_picker.get_date(), datetime.min.time())
         slots = generate_slots(
             start_date=start,
             count=len(checked),
@@ -451,7 +520,40 @@ class App(tk.Tk):
             video.setdefault("status", {})["publishAt"] = slots[i]
 
         self.video_table.load_videos(self._videos)
-        self._log(f"Assigned {len(slots)} slot(s) starting {self.start_date_var.get()}.")
+        self._log(f"Assigned {len(slots)} slot(s) starting "
+                  f"{self._bulk_date_picker.get_date().strftime('%Y-%m-%d')}.")
+
+    def _apply_schedule_date(self):
+        """Apply the same date/time to all checked videos."""
+        checked = self.video_table.get_checked_indices()
+        if not checked:
+            messagebox.showinfo("Schedule Date", "No videos checked.")
+            return
+
+        date_str = self._sched_date_picker.get().strip()
+        if not date_str:
+            messagebox.showerror("Schedule Date", "Please select a date.")
+            return
+
+        try:
+            time_str = f"{self._sched_hour.get()}:{self._sched_min.get()}"
+            tz = pytz.timezone(self._config.get("timezone", "America/Los_Angeles"))
+            naive = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+            publish_at = tz.localize(naive, is_dst=None).astimezone(pytz.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+        except Exception as exc:
+            messagebox.showerror("Schedule Date", f"Invalid date/time: {exc}")
+            return
+
+        for idx in checked:
+            video = self._videos[idx]
+            video.setdefault("status", {})["publishAt"] = publish_at
+
+        # Refresh panel if one of the updated videos is currently open
+        self.settings_panel.set_schedule(publish_at)
+        self.video_table.load_videos(self._videos)
+        self._log(f"Set {len(checked)} video(s) to {date_str} {time_str} (local).")
 
     # ------------------------------------------------------------------
     # Apply & Save

@@ -62,8 +62,11 @@ class TikTokUploadTab(ttk.Frame):
         self._form.bind("<Configure>", lambda e: canvas.configure(
             scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda e: canvas.itemconfig(fid, width=e.width))
-        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(
-            int(-1 * e.delta / 120), "units"))
+        def _scroll(event, c=canvas):
+            if (c.winfo_rootx() <= event.x_root < c.winfo_rootx() + c.winfo_width()
+                    and c.winfo_rooty() <= event.y_root < c.winfo_rooty() + c.winfo_height()):
+                c.yview_scroll(int(-1 * event.delta / 120), "units")
+        canvas.bind_all("<MouseWheel>", _scroll, add=True)
 
         self._build_form()
 

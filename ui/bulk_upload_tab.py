@@ -1,4 +1,4 @@
-"""Upload tab — all fields available on videos.insert."""
+"""Bulk upload tab — select multiple files, unique titles, shared settings."""
 
 import threading
 import tkinter as tk
@@ -7,78 +7,61 @@ from pathlib import Path
 from tkinter import ttk, filedialog, messagebox
 
 import pytz
+
+from youtube_api import upload_video
+from ui.settings_panel import CATEGORIES, CATEGORY_NAMES
 from ui.widgets import DateEntry
 
-from youtube_api import upload_video, set_thumbnail
-from ui.settings_panel import CATEGORIES, CATEGORY_NAMES
-
-# Maps display label → mimetype hint accepted by the file dialog
 VIDEO_FILETYPES = [
     ("Video files", "*.mp4 *.mov *.avi *.mkv *.webm *.flv *.wmv *.mpeg *.mpg *.m4v"),
     ("All files", "*.*"),
 ]
-IMAGE_FILETYPES = [
-    ("Images", "*.jpg *.jpeg *.png *.webp *.bmp"),
-    ("All files", "*.*"),
-]
 
 
-class UploadTab(ttk.Frame):
+class BulkUploadTab(ttk.Frame):
     def __init__(self, parent, get_service, config: dict, log_callback=None):
-        """
-        get_service: callable that returns the current youtube service
-        log_callback: optional fn(msg, error=False) to write to a shared log
-        """
         super().__init__(parent)
         self._get_service = get_service
         self._config = config
         self._external_log = log_callback
         self._uploading = False
+        self._files: list[dict] = []   # {"path": str, "title_var": StringVar, "row": Frame}
         self._build()
 
     # ------------------------------------------------------------------
     # Layout
     # ------------------------------------------------------------------
     def _build(self):
-        # Split: left = scrollable form, right = log + progress
-        self.columnconfigure(0, weight=3)
-        self.columnconfigure(1, weight=1)
         self.rowconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
 
-        # ── Left: scrollable form ─────────────────────────────────────
-        form_outer = ttk.LabelFrame(self, text="Video Details", padding=(6, 4))
-        form_outer.grid(row=0, column=0, sticky="nsew", padx=(6, 3), pady=6)
-        form_outer.rowconfigure(0, weight=1)
-        form_outer.columnconfigure(0, weight=1)
+        paned = ttk.PanedWindow(self, orient="vertical")
+        paned.grid(row=0, column=0, sticky="nsew")
 
-        canvas = tk.Canvas(form_outer, borderwidth=0, highlightthickness=0)
-        vsb = ttk.Scrollbar(form_outer, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=vsb.set)
-        vsb.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
+        # ── Top: file list ────────────────────────────────────────────
+        file_frame = ttk.LabelFrame(paned, text="Files to Upload", padding=(6, 4))
+        paned.add(file_frame, weight=1)
+        self._build_file_list(file_frame)
 
-        self._form = ttk.Frame(canvas)
-        fid = canvas.create_window((0, 0), window=self._form, anchor="nw")
-        self._form.bind("<Configure>", lambda e: canvas.configure(
-            scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(fid, width=e.width))
-        def _scroll(event, c=canvas):
-            if (c.winfo_rootx() <= event.x_root < c.winfo_rootx() + c.winfo_width()
-                    and c.winfo_rooty() <= event.y_root < c.winfo_rooty() + c.winfo_height()):
-                c.yview_scroll(int(-1 * event.delta / 120), "units")
-        canvas.bind_all("<MouseWheel>", _scroll, add=True)
+        # ── Bottom: shared settings (left) + controls (right) ─────────
+        bottom = ttk.Frame(paned)
+        paned.add(bottom, weight=2)
+        bottom.rowconfigure(0, weight=1)
+        bottom.columnconfigure(0, weight=3)
+        bottom.columnconfigure(1, weight=1)
 
-        self._build_form()
+        settings_outer = ttk.LabelFrame(bottom, text="Shared Settings", padding=(6, 4))
+        settings_outer.grid(row=0, column=0, sticky="nsew", padx=(6, 3), pady=6)
+        settings_outer.rowconfigure(0, weight=1)
+        settings_outer.columnconfigure(0, weight=1)
+        self._build_settings(settings_outer)
 
-        # ── Right: log + progress + upload button ─────────────────────
-        right = ttk.Frame(self)
+        right = ttk.Frame(bottom)
         right.grid(row=0, column=1, sticky="nsew", padx=(3, 6), pady=6)
         right.rowconfigure(1, weight=1)
         right.columnconfigure(0, weight=1)
 
-        self._upload_btn = ttk.Button(
-            right, text="⬆  Upload Video", command=self._start_upload
-        )
+        self._upload_btn = ttk.Button(right, text="⬆  Upload All", command=self._start_upload)
         self._upload_btn.grid(row=0, column=0, sticky="ew", pady=(0, 4))
 
         log_frame = ttk.LabelFrame(right, text="Upload Log", padding=4)
@@ -86,9 +69,7 @@ class UploadTab(ttk.Frame):
         log_frame.rowconfigure(0, weight=1)
         log_frame.columnconfigure(0, weight=1)
 
-        self._log_text = tk.Text(
-            log_frame, state="disabled", wrap="word", font=("Courier", 9)
-        )
+        self._log_text = tk.Text(log_frame, state="disabled", wrap="word", font=("Courier", 9))
         log_sb = ttk.Scrollbar(log_frame, command=self._log_text.yview)
         self._log_text.configure(yscrollcommand=log_sb.set)
         self._log_text.grid(row=0, column=0, sticky="nsew")
@@ -103,65 +84,130 @@ class UploadTab(ttk.Frame):
             right, variable=self._progress_var, maximum=100, mode="determinate"
         ).grid(row=3, column=0, sticky="ew", pady=(2, 0))
 
-    def _build_form(self):
-        f = self._form
+    # ------------------------------------------------------------------
+    # File list
+    # ------------------------------------------------------------------
+    def _build_file_list(self, parent):
+        parent.rowconfigure(1, weight=1)
+        parent.columnconfigure(0, weight=1)
+
+        # Toolbar
+        toolbar = ttk.Frame(parent)
+        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        ttk.Button(toolbar, text="+ Add Files", command=self._add_files).pack(side="left", padx=2)
+        ttk.Button(toolbar, text="✕ Clear All", command=self._clear_files).pack(side="left", padx=2)
+        ttk.Label(
+            toolbar,
+            text="Each file gets its own title; all other settings are shared.",
+            foreground="#666666",
+        ).pack(side="left", padx=(12, 0))
+
+        # Scrollable rows
+        container = ttk.Frame(parent)
+        container.grid(row=1, column=0, sticky="nsew")
+        container.rowconfigure(0, weight=1)
+        container.columnconfigure(0, weight=1)
+
+        self._file_canvas = tk.Canvas(
+            container, borderwidth=0, highlightthickness=0, height=120
+        )
+        vsb = ttk.Scrollbar(container, orient="vertical", command=self._file_canvas.yview)
+        self._file_canvas.configure(yscrollcommand=vsb.set)
+        vsb.grid(row=0, column=1, sticky="ns")
+        self._file_canvas.grid(row=0, column=0, sticky="nsew")
+
+        self._file_inner = ttk.Frame(self._file_canvas)
+        self._file_win_id = self._file_canvas.create_window(
+            (0, 0), window=self._file_inner, anchor="nw"
+        )
+        self._file_inner.bind("<Configure>", lambda e: self._file_canvas.configure(
+            scrollregion=self._file_canvas.bbox("all")
+        ))
+        self._file_canvas.bind("<Configure>", lambda e: self._file_canvas.itemconfig(
+            self._file_win_id, width=e.width
+        ))
+
+        # Column headers
+        hdr = ttk.Frame(self._file_inner)
+        hdr.pack(fill="x", padx=4, pady=(0, 2))
+        ttk.Label(hdr, text="Filename", width=35, font=("", 9, "bold")).pack(side="left")
+        ttk.Label(hdr, text="Title  (edit per file)", font=("", 9, "bold")).pack(
+            side="left", padx=(4, 0)
+        )
+
+    def _add_files(self):
+        paths = filedialog.askopenfilenames(
+            title="Select Video Files", filetypes=VIDEO_FILETYPES
+        )
+        for path in paths:
+            # Skip duplicates
+            if any(f["path"] == path for f in self._files):
+                continue
+            self._add_file_row(path)
+
+    def _add_file_row(self, path: str):
+        title_var = tk.StringVar(value=Path(path).stem)
+        row = ttk.Frame(self._file_inner)
+        row.pack(fill="x", padx=4, pady=1)
+
+        ttk.Label(row, text=Path(path).name, width=35, anchor="w").pack(side="left")
+        ttk.Entry(row, textvariable=title_var).pack(side="left", fill="x", expand=True, padx=(4, 4))
+        ttk.Button(
+            row, text="✕", width=2,
+            command=lambda r=row, p=path: self._remove_file(r, p),
+        ).pack(side="right")
+
+        self._files.append({"path": path, "title_var": title_var, "row": row})
+
+    def _remove_file(self, row_frame: ttk.Frame, path: str):
+        self._files = [f for f in self._files if f["path"] != path]
+        row_frame.destroy()
+
+    def _clear_files(self):
+        for entry in self._files:
+            entry["row"].destroy()
+        self._files.clear()
+
+    # ------------------------------------------------------------------
+    # Shared settings form
+    # ------------------------------------------------------------------
+    def _build_settings(self, parent):
+        canvas = tk.Canvas(parent, borderwidth=0, highlightthickness=0)
+        vsb = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+
+        f = ttk.Frame(canvas)
+        fid = canvas.create_window((0, 0), window=f, anchor="nw")
+        f.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(fid, width=e.width))
+
+        def _scroll(event, c=canvas):
+            if (c.winfo_rootx() <= event.x_root < c.winfo_rootx() + c.winfo_width()
+                    and c.winfo_rooty() <= event.y_root < c.winfo_rooty() + c.winfo_height()):
+                c.yview_scroll(int(-1 * event.delta / 120), "units")
+        canvas.bind_all("<MouseWheel>", _scroll, add=True)
+
         r = 0
 
         def lbl(text, row, col=0, **kw):
             ttk.Label(f, text=text).grid(row=row, column=col, sticky="w", pady=2, **kw)
 
-        # ── File pickers ──────────────────────────────────────────────
-        lbl("Video File: *", r)
-        self.video_path_var = tk.StringVar()
-        ttk.Entry(f, textvariable=self.video_path_var, width=42).grid(
-            row=r, column=1, columnspan=3, sticky="ew", padx=(4, 0)
-        )
-        ttk.Button(f, text="Browse…", command=self._pick_video).grid(
-            row=r, column=4, padx=(4, 0)
-        )
-        r += 1
-
-        lbl("Thumbnail:", r)
-        self.thumb_path_var = tk.StringVar()
-        ttk.Entry(f, textvariable=self.thumb_path_var, width=42).grid(
-            row=r, column=1, columnspan=3, sticky="ew", padx=(4, 0)
-        )
-        ttk.Button(f, text="Browse…", command=self._pick_thumbnail).grid(
-            row=r, column=4, padx=(4, 0)
-        )
-        lbl("(optional, max 2 MB)", r, 5, padx=(6, 0))
-        r += 1
-
-        ttk.Separator(f, orient="horizontal").grid(
-            row=r, column=0, columnspan=6, sticky="ew", pady=6
-        )
-        r += 1
-
-        # ── Title ─────────────────────────────────────────────────────
-        lbl("Title: *", r)
-        self.title_var = tk.StringVar()
-        ttk.Entry(f, textvariable=self.title_var, width=52).grid(
-            row=r, column=1, columnspan=4, sticky="ew", padx=(4, 0)
-        )
-        r += 1
-
         # ── Description ───────────────────────────────────────────────
         lbl("Description:", r)
-        self.desc_text = tk.Text(f, width=52, height=5, wrap="word")
+        self.desc_text = tk.Text(f, width=48, height=4, wrap="word")
         self.desc_text.grid(row=r, column=1, columnspan=4, sticky="ew", padx=(4, 0))
         ttk.Scrollbar(f, command=self.desc_text.yview).grid(row=r, column=5, sticky="ns")
         r += 1
 
         # ── Tags ──────────────────────────────────────────────────────
         lbl("Tags:", r)
-        self.tags_text = tk.Text(f, width=52, height=3, wrap="word")
+        self.tags_text = tk.Text(f, width=48, height=2, wrap="word")
         self.tags_text.grid(row=r, column=1, columnspan=4, sticky="ew", padx=(4, 0))
         ttk.Scrollbar(f, command=self.tags_text.yview).grid(row=r, column=5, sticky="ns")
-        # Pre-fill with default tags
-        default_tags = self._config.get("default_tags", [])
-        self.tags_text.insert("1.0", ", ".join(default_tags))
+        self.tags_text.insert("1.0", ", ".join(self._config.get("default_tags", [])))
 
-        # Preset selector
         preset_frame = ttk.Frame(f)
         preset_frame.grid(row=r, column=6, sticky="nw", padx=(8, 0))
         ttk.Label(preset_frame, text="Tag Preset:").pack(anchor="w")
@@ -184,14 +230,14 @@ class UploadTab(ttk.Frame):
         self.category_var = tk.StringVar(value="Gaming")
         ttk.Combobox(
             f, textvariable=self.category_var, values=CATEGORY_NAMES,
-            width=22, state="readonly"
+            width=22, state="readonly",
         ).grid(row=r, column=1, columnspan=2, sticky="w", padx=(4, 0))
         lbl("Privacy:", r, 3, padx=(8, 0))
         self.privacy_var = tk.StringVar(value="private")
         ttk.Combobox(
             f, textvariable=self.privacy_var,
             values=["private", "scheduled", "unlisted", "public"],
-            width=10, state="readonly"
+            width=10, state="readonly",
         ).grid(row=r, column=4, sticky="w", padx=(4, 0))
         r += 1
 
@@ -201,9 +247,9 @@ class UploadTab(ttk.Frame):
         ttk.Combobox(
             f, textvariable=self.license_var,
             values=["youtube", "creativeCommon"],
-            width=16, state="readonly"
+            width=16, state="readonly",
         ).grid(row=r, column=1, columnspan=2, sticky="w", padx=(4, 0))
-        lbl("Default Language:", r, 3, padx=(8, 0))
+        lbl("Language:", r, 3, padx=(8, 0))
         self.lang_var = tk.StringVar()
         ttk.Entry(f, textvariable=self.lang_var, width=8).grid(
             row=r, column=4, sticky="w", padx=(4, 0)
@@ -212,7 +258,7 @@ class UploadTab(ttk.Frame):
         r += 1
 
         # ── Audio language ────────────────────────────────────────────
-        lbl("Audio Language:", r)
+        lbl("Audio Lang:", r)
         self.audio_lang_var = tk.StringVar()
         ttk.Entry(f, textvariable=self.audio_lang_var, width=8).grid(
             row=r, column=1, sticky="w", padx=(4, 0)
@@ -225,14 +271,14 @@ class UploadTab(ttk.Frame):
         )
         r += 1
 
-        # ── Schedule date / time ──────────────────────────────────────
+        # ── Schedule ──────────────────────────────────────────────────
         lbl("Schedule Date:", r)
         self.date_picker = DateEntry(
             f, width=12, date_pattern="yyyy-mm-dd",
             background="darkblue", foreground="white", borderwidth=2,
         )
         self.date_picker.grid(row=r, column=1, sticky="w", padx=(4, 0))
-        self.date_picker.delete(0, "end")   # start blank
+        self.date_picker.delete(0, "end")
         lbl("Time:", r, 2, padx=(8, 0))
         self._hour_var = tk.StringVar(value="07")
         self._min_var  = tk.StringVar(value="00")
@@ -244,10 +290,10 @@ class UploadTab(ttk.Frame):
         lbl(":", r, 4)
         ttk.Spinbox(
             f, textvariable=self._min_var,
-            values=["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"],
+            values=["00","05","10","15","20","25","30","35","40","45","50","55"],
             width=3, wrap=True, state="readonly",
         ).grid(row=r, column=5, sticky="w")
-        lbl("(local tz — leave blank for immediate)", r, 6, padx=(6, 0))
+        lbl("(local tz — blank = immediate)", r, 6, padx=(6, 0))
         r += 1
 
         ttk.Separator(f, orient="horizontal").grid(
@@ -258,7 +304,6 @@ class UploadTab(ttk.Frame):
         # ── Checkboxes ────────────────────────────────────────────────
         chk = ttk.Frame(f)
         chk.grid(row=r, column=0, columnspan=7, sticky="w", pady=(2, 4))
-
         self.made_for_kids_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(chk, text="Made for Kids", variable=self.made_for_kids_var).pack(
             side="left", padx=(0, 10)
@@ -276,34 +321,12 @@ class UploadTab(ttk.Frame):
             side="left", padx=(0, 10)
         )
         self.notify_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(chk, text="Notify Subscribers", variable=self.notify_var).pack(
-            side="left"
-        )
+        ttk.Checkbutton(chk, text="Notify Subscribers", variable=self.notify_var).pack(side="left")
 
         f.columnconfigure(1, weight=1)
 
     # ------------------------------------------------------------------
-    # File pickers
-    # ------------------------------------------------------------------
-    def _pick_video(self):
-        path = filedialog.askopenfilename(
-            title="Select Video File", filetypes=VIDEO_FILETYPES
-        )
-        if path:
-            self.video_path_var.set(path)
-            # Auto-fill title from filename if blank
-            if not self.title_var.get():
-                self.title_var.set(Path(path).stem)
-
-    def _pick_thumbnail(self):
-        path = filedialog.askopenfilename(
-            title="Select Thumbnail Image", filetypes=IMAGE_FILETYPES
-        )
-        if path:
-            self.thumb_path_var.set(path)
-
-    # ------------------------------------------------------------------
-    # Tag presets
+    # Presets
     # ------------------------------------------------------------------
     def _refresh_presets(self):
         self.preset_combo["values"] = ["default"] + list(
@@ -320,20 +343,47 @@ class UploadTab(ttk.Frame):
         self.tags_text.delete("1.0", "end")
         self.tags_text.insert("1.0", ", ".join(tags))
 
+    def refresh_presets(self):
+        self._refresh_presets()
+
     # ------------------------------------------------------------------
     # Upload
     # ------------------------------------------------------------------
+    def _build_publish_at(self) -> str | None:
+        date_str = self.date_picker.get().strip()
+        if not date_str:
+            return None
+        try:
+            time_str = f"{self._hour_var.get()}:{self._min_var.get()}"
+            tz = pytz.timezone(self._config.get("timezone", "America/Los_Angeles"))
+            naive = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+            return tz.localize(naive, is_dst=None).astimezone(pytz.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ"
+            )
+        except Exception:
+            return None
+
     def _start_upload(self):
         if self._uploading:
             return
 
-        video_path = self.video_path_var.get().strip()
-        if not video_path or not Path(video_path).is_file():
-            messagebox.showerror("Missing File", "Please select a valid video file.")
-            return
-        title = self.title_var.get().strip()
-        if not title:
-            messagebox.showerror("Missing Title", "Please enter a title.")
+        # Validate
+        to_upload = []
+        for entry in self._files:
+            path = entry["path"]
+            title = entry["title_var"].get().strip()
+            if not Path(path).is_file():
+                messagebox.showerror("Missing File", f"File not found:\n{path}")
+                return
+            if not title:
+                messagebox.showerror(
+                    "Missing Title", f"Please enter a title for:\n{Path(path).name}"
+                )
+                return
+            to_upload.append({"path": path, "title": title})
+
+        if not to_upload:
+            messagebox.showinfo("No Files", "Add at least one video file.")
             return
 
         privacy = self.privacy_var.get()
@@ -350,19 +400,14 @@ class UploadTab(ttk.Frame):
             privacy = "private"
 
         tags = [t.strip() for t in self.tags_text.get("1.0", "end").strip().split(",") if t.strip()]
-        lang = self.lang_var.get().strip() or None
-        audio_lang = self.audio_lang_var.get().strip() or None
-
-        params = dict(
-            file_path=video_path,
-            title=title,
+        shared = dict(
             description=self.desc_text.get("1.0", "end").rstrip("\n"),
             tags=tags,
             category_id=CATEGORIES.get(self.category_var.get(), "20"),
             privacy_status=privacy,
             publish_at=publish_at,
-            default_language=lang,
-            default_audio_language=audio_lang,
+            default_language=self.lang_var.get().strip() or None,
+            default_audio_language=self.audio_lang_var.get().strip() or None,
             license=self.license_var.get(),
             embeddable=self.embeddable_var.get(),
             made_for_kids=self.made_for_kids_var.get(),
@@ -370,36 +415,48 @@ class UploadTab(ttk.Frame):
             public_stats_viewable=self.public_stats_var.get(),
             notify_subscribers=self.notify_var.get(),
         )
-        thumb_path = self.thumb_path_var.get().strip() or None
 
         self._uploading = True
         self._upload_btn.configure(state="disabled")
         self._progress_var.set(0)
-        self._log(f"Starting upload: {Path(video_path).name}")
-
-        def progress_cb(pct):
-            self.after(0, lambda p=pct: self._set_progress(p))
+        self._log(f"Starting bulk upload — {len(to_upload)} file(s)…")
 
         def worker():
-            try:
-                service = self._get_service()
-                result = upload_video(service=service, progress_callback=progress_cb, **params)
-                video_id = result.get("id", "?")
-                self.after(0, lambda: self._log(f"✓ Uploaded — video ID: {video_id}"))
+            service = self._get_service()
+            total = len(to_upload)
+            failed = 0
+            for i, item in enumerate(to_upload):
+                name = Path(item["path"]).name
+                self.after(0, lambda n=name, idx=i: self._log(
+                    f"[{idx + 1}/{total}] {n}"
+                ))
 
-                if thumb_path and Path(thumb_path).is_file():
-                    self.after(0, lambda: self._log("Setting thumbnail…"))
-                    try:
-                        set_thumbnail(service, video_id, thumb_path)
-                        self.after(0, lambda: self._log("✓ Thumbnail set."))
-                    except Exception as te:
-                        self.after(0, lambda e=te: self._log(
-                            f"Thumbnail failed: {e}", error=True
-                        ))
-            except Exception as exc:
-                self.after(0, lambda e=exc: self._log(f"Upload failed: {e}", error=True))
-            finally:
-                self.after(0, self._upload_done)
+                def progress_cb(pct, i=i):
+                    overall = (i + pct / 100) / total * 100
+                    self.after(0, lambda p=overall: self._set_progress(p))
+
+                try:
+                    result = upload_video(
+                        service=service,
+                        file_path=item["path"],
+                        title=item["title"],
+                        progress_callback=progress_cb,
+                        **shared,
+                    )
+                    vid_id = result.get("id", "?")
+                    self.after(0, lambda n=name, v=vid_id: self._log(f"  ✓ id={v}  {n}"))
+                except Exception as exc:
+                    failed += 1
+                    self.after(0, lambda n=name, e=exc: self._log(
+                        f"  ✗ {n}: {e}", error=True
+                    ))
+
+            ok = total - failed
+            self.after(0, lambda: self._set_progress(100))
+            self.after(0, lambda: self._log(
+                f"Done — {ok}/{total} succeeded." + (f"  {failed} failed." if failed else "")
+            ))
+            self.after(0, self._upload_done)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -410,19 +467,6 @@ class UploadTab(ttk.Frame):
     def _set_progress(self, pct: float):
         self._progress_var.set(pct)
         self._progress_lbl.set(f"{pct:.0f}%")
-
-    def _build_publish_at(self) -> str | None:
-        date_str = self.date_picker.get().strip()
-        if not date_str:
-            return None
-        try:
-            time_str = f"{self._hour_var.get()}:{self._min_var.get()}"
-            tz = pytz.timezone(self._config.get("timezone", "America/Los_Angeles"))
-            naive = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
-            local_dt = tz.localize(naive, is_dst=None)
-            return local_dt.astimezone(pytz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        except Exception:
-            return None
 
     # ------------------------------------------------------------------
     # Log
@@ -436,7 +480,3 @@ class UploadTab(ttk.Frame):
         self._log_text.configure(state="disabled")
         if self._external_log:
             self._external_log(msg, error)
-
-    def refresh_presets(self):
-        """Called by the main app when tag presets change."""
-        self._refresh_presets()

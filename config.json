@@ -46,6 +46,9 @@
   ],
   "active_account": "BibleKhaos",
   "tiktok_client_secrets_path": "tiktok_client_secrets.json",
-  "tiktok_accounts": [],
-  "tiktok_active_account": ""
+  "tiktok_accounts": [
+    "GoodKhaos",
+    "BibleKhaos"
+  ],
+  "tiktok_active_account": "BibleKhaos"
 }

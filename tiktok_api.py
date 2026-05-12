@@ -14,8 +14,8 @@ POLL_INTERVAL = 3                # seconds between polls
 
 VIDEO_FIELDS = (
     "id,title,video_description,create_time,cover_image_url,"
-    "share_url,duration,height,width,embed_link,"
-    "view_count,like_count,comment_count,share_count,privacy_level"
+    "share_url,duration,height,width,"
+    "view_count,like_count,comment_count,share_count"
 )
 
 
@@ -27,11 +27,24 @@ def _headers(token: dict) -> dict:
     return {"Authorization": f"Bearer {token['access_token']}"}
 
 
+def _raise(resp: requests.Response) -> None:
+    """Raise with TikTok's error body included in the message."""
+    try:
+        body = resp.json()
+        err = body.get("error", {})
+        code = err.get("code") or resp.status_code
+        msg  = err.get("message") or resp.text
+        raise RuntimeError(f"TikTok {resp.status_code} [{code}]: {msg}")
+    except (ValueError, KeyError):
+        resp.raise_for_status()
+
+
 def _post(endpoint: str, token: dict, **kwargs) -> dict:
     resp = requests.post(
         BASE + endpoint, headers=_headers(token), timeout=30, **kwargs
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        _raise(resp)
     data = resp.json()
     err = data.get("error", {})
     if err.get("code", "ok") not in ("ok", ""):
@@ -43,7 +56,8 @@ def _get(endpoint: str, token: dict, **kwargs) -> dict:
     resp = requests.get(
         BASE + endpoint, headers=_headers(token), timeout=30, **kwargs
     )
-    resp.raise_for_status()
+    if not resp.ok:
+        _raise(resp)
     data = resp.json()
     err = data.get("error", {})
     if err.get("code", "ok") not in ("ok", ""):
@@ -77,14 +91,15 @@ def fetch_my_videos(token: dict, limit: int = 25) -> list[dict]:
     page = min(limit, 20) if limit else 20  # TikTok max page size = 20
 
     while True:
-        body = {
-            "max_count": page,
-            "fields": VIDEO_FIELDS,
-        }
+        body = {"max_count": page}
         if cursor:
             body["cursor"] = cursor
 
-        data = _post("/v2/video/list/", token, json=body)
+        data = _post(
+            f"/v2/video/list/?fields={VIDEO_FIELDS}",
+            token,
+            json=body,
+        )
         items = data.get("data", {}).get("videos", [])
         videos.extend(items)
 

@@ -2,7 +2,9 @@
 
 import tkinter as tk
 from tkinter import ttk
-from datetime import datetime
+from datetime import datetime, date
+
+from ui.widgets import DateEntry
 
 import pytz
 
@@ -56,10 +58,12 @@ class SettingsPanel(ttk.LabelFrame):
         canvas.bind("<Configure>", lambda e: canvas.itemconfig(
             self._inner_id, width=e.width
         ))
-        # Mouse-wheel scroll
-        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(
-            int(-1 * (e.delta / 120)), "units"
-        ))
+        # Mouse-wheel scroll — only when pointer is inside this canvas
+        def _scroll(event, c=canvas):
+            if (c.winfo_rootx() <= event.x_root < c.winfo_rootx() + c.winfo_width()
+                    and c.winfo_rooty() <= event.y_root < c.winfo_rooty() + c.winfo_height()):
+                c.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", _scroll, add=True)
 
         self._canvas = canvas
         self._build_fields()
@@ -89,16 +93,27 @@ class SettingsPanel(ttk.LabelFrame):
 
         # ── Schedule ──────────────────────────────────────────────────
         lbl("Schedule Date:", row, 0)
-        self.date_var = tk.StringVar()
-        ttk.Entry(f, textvariable=self.date_var, width=12).grid(
-            row=row, column=1, sticky="w", padx=(4, 0)
+        self.date_picker = DateEntry(
+            f, width=12, date_pattern="yyyy-mm-dd",
+            background="darkblue", foreground="white", borderwidth=2,
         )
-        lbl("Time (HH:MM):", row, 2, padx=(8, 0))
-        self.time_var = tk.StringVar()
-        ttk.Entry(f, textvariable=self.time_var, width=8).grid(
-            row=row, column=3, sticky="w", padx=(4, 0)
-        )
-        lbl("(local tz)", row, 4, padx=(4, 0))
+        self.date_picker.grid(row=row, column=1, sticky="w", padx=(4, 0))
+        self.date_picker.delete(0, "end")   # start blank (no date pre-filled)
+        lbl("Time:", row, 2, padx=(8, 0))
+        self._hour_var = tk.StringVar(value="07")
+        self._min_var  = tk.StringVar(value="00")
+        ttk.Spinbox(
+            f, textvariable=self._hour_var,
+            values=[f"{h:02d}" for h in range(24)],
+            width=3, wrap=True, state="readonly",
+        ).grid(row=row, column=3, sticky="w", padx=(4, 0))
+        lbl(":", row, 4)
+        ttk.Spinbox(
+            f, textvariable=self._min_var,
+            values=["00", "05", "10", "15", "20", "25", "30", "35", "40", "45", "50", "55"],
+            width=3, wrap=True, state="readonly",
+        ).grid(row=row, column=5, sticky="w")
+        lbl("(local tz)", row, 6, padx=(6, 0))
         row += 1
 
         # ── Category + Privacy ────────────────────────────────────────
@@ -113,7 +128,7 @@ class SettingsPanel(ttk.LabelFrame):
         self.privacy_var = tk.StringVar(value="private")
         ttk.Combobox(
             f, textvariable=self.privacy_var,
-            values=["private", "unlisted", "public"],
+            values=["private", "scheduled", "unlisted", "public"],
             width=10, state="readonly"
         ).grid(row=row, column=4, sticky="w", padx=(4, 0))
         row += 1
@@ -235,17 +250,24 @@ class SettingsPanel(ttk.LabelFrame):
                 )
                 tz = pytz.timezone(self._config.get("timezone", "America/Los_Angeles"))
                 local_dt = utc_dt.astimezone(tz)
-                self.date_var.set(local_dt.strftime("%Y-%m-%d"))
-                self.time_var.set(local_dt.strftime("%H:%M"))
+                self.date_picker.set_date(local_dt.date())
+                self._hour_var.set(local_dt.strftime("%H"))
+                self._min_var.set(local_dt.strftime("%M"))
             except Exception:
-                self.date_var.set("")
-                self.time_var.set("")
+                self.date_picker.delete(0, "end")
+                self._hour_var.set("07")
+                self._min_var.set("00")
         else:
-            self.date_var.set("")
-            self.time_var.set("")
+            self.date_picker.delete(0, "end")
+            self._hour_var.set("07")
+            self._min_var.set("00")
 
-        # Status fields
-        self.privacy_var.set(status.get("privacyStatus", "private"))
+        # Status fields — show "scheduled" when the video is private with a future publish date
+        raw_privacy = status.get("privacyStatus", "private")
+        if raw_privacy == "private" and status.get("publishAt"):
+            self.privacy_var.set("scheduled")
+        else:
+            self.privacy_var.set(raw_privacy)
         self.license_var.set(status.get("license", "youtube"))
         self.embeddable_var.set(status.get("embeddable", True))
         self.made_for_kids_var.set(status.get("selfDeclaredMadeForKids", False))
@@ -259,6 +281,11 @@ class SettingsPanel(ttk.LabelFrame):
         lang = self.lang_var.get().strip() or None
         audio_lang = self.audio_lang_var.get().strip() or None
 
+        # "scheduled" is a UI alias — the API expects "private" with a publish_at
+        privacy = self.privacy_var.get()
+        if privacy == "scheduled":
+            privacy = "private"
+
         return {
             "video_id": self._video_id,
             "title": self.title_var.get().strip(),
@@ -268,7 +295,7 @@ class SettingsPanel(ttk.LabelFrame):
             "default_audio_language": audio_lang,
             "tags": tags,
             "publish_at": self._build_publish_at(),
-            "privacy_status": self.privacy_var.get(),
+            "privacy_status": privacy,
             "license": self.license_var.get(),
             "embeddable": self.embeddable_var.get(),
             "made_for_kids": self.made_for_kids_var.get(),
@@ -283,8 +310,11 @@ class SettingsPanel(ttk.LabelFrame):
             )
             tz = pytz.timezone(self._config.get("timezone", "America/Los_Angeles"))
             local_dt = utc_dt.astimezone(tz)
-            self.date_var.set(local_dt.strftime("%Y-%m-%d"))
-            self.time_var.set(local_dt.strftime("%H:%M"))
+            self.date_picker.set_date(local_dt.date())
+            self._hour_var.set(local_dt.strftime("%H"))
+            # snap minutes to nearest 5
+            snap = round(local_dt.minute / 5) * 5
+            self._min_var.set(f"{snap % 60:02d}")
         except Exception:
             pass
 
@@ -293,8 +323,9 @@ class SettingsPanel(ttk.LabelFrame):
         self.title_var.set("")
         self.desc_text.delete("1.0", "end")
         self.tags_text.delete("1.0", "end")
-        self.date_var.set("")
-        self.time_var.set("")
+        self.date_picker.delete(0, "end")
+        self._hour_var.set("07")
+        self._min_var.set("00")
         self.category_var.set("Gaming")
         self.privacy_var.set("private")
         self.license_var.set("youtube")
@@ -309,11 +340,11 @@ class SettingsPanel(ttk.LabelFrame):
     # Internal helpers
     # ------------------------------------------------------------------
     def _build_publish_at(self) -> str | None:
-        date_str = self.date_var.get().strip()
-        time_str = self.time_var.get().strip()
-        if not date_str or not time_str:
+        date_str = self.date_picker.get().strip()
+        if not date_str:
             return None
         try:
+            time_str = f"{self._hour_var.get()}:{self._min_var.get()}"
             tz = pytz.timezone(self._config.get("timezone", "America/Los_Angeles"))
             naive = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
             local_dt = tz.localize(naive, is_dst=None)
